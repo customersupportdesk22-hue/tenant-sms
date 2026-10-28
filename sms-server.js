@@ -7,9 +7,10 @@ require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increased limit in case you paste large contacts
 
 // --- CONFIGURATION ---
+// SMSGate uses Basic Auth. Make sure these are set in Render Environment Variables
 const SMSGATE_USER = process.env.SMSGATE_USER;
 const SMSGATE_PASS = process.env.SMSGATE_PASS;
 const SMSGATE_URL = 'https://api.sms-gate.app/3rdparty/v1/messages';
@@ -26,7 +27,7 @@ async function connectDB() {
     try {
         const client = new MongoClient(MONGODB_URI);
         await client.connect();
-        db = client.db('sms-app'); // Uses a separate database for this project
+        db = client.db('sms-app'); // Creates/uses a dedicated database for this app
         contacts = db.collection('contacts');
         schedules = db.collection('schedules');
         logs = db.collection('logs');
@@ -42,7 +43,9 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// --- API ROUTES ---
+// ==========================================
+// API ROUTES
+// ==========================================
 
 // 1. Get all contacts
 app.get('/api/contacts', async (req, res) => {
@@ -54,12 +57,13 @@ app.get('/api/contacts', async (req, res) => {
     }
 });
 
-// 2. Add contacts
+// 2. Add bulk contacts
 app.post('/api/contacts', async (req, res) => {
     const { numbers } = req.body;
     if (!numbers || numbers.length === 0) return res.status(400).json({ error: 'No numbers provided' });
 
     try {
+        // Filter out duplicates based on phone number (optional but recommended)
         const docs = numbers.map(n => ({ phone: n, created_at: new Date() }));
         await contacts.insertMany(docs);
         res.json({ success: true, message: `${numbers.length} numbers saved!` });
@@ -68,19 +72,29 @@ app.post('/api/contacts', async (req, res) => {
     }
 });
 
-// 3. Send SMS Now (Manual)
+// 3. Delete ALL contacts (The new route you requested)
+app.delete('/api/contacts/all', async (req, res) => {
+    try {
+        await contacts.deleteMany({}); 
+        res.json({ success: true, message: 'All contacts deleted successfully!' });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to delete contacts' });
+    }
+});
+
+// 4. Send SMS Now (Manual)
 app.post('/api/send-now', async (req, res) => {
     const { message, numbers } = req.body;
     if (!message || !numbers) return res.status(400).json({ error: 'Missing data' });
     
-    // Respond immediately so the UI doesn't freeze
+    // Respond immediately so the UI doesn't freeze (sending happens in background)
     res.json({ success: true, message: 'Sending started in background' });
     
     // Process in background
     processSMS(numbers, message, 'Manual');
 });
 
-// 4. Schedule SMS
+// 5. Schedule SMS for Later
 app.post('/api/schedule', async (req, res) => {
     const { message, numbers, scheduleTime } = req.body;
     if (!message || !numbers || !scheduleTime) return res.status(400).json({ error: 'Missing data' });
@@ -99,7 +113,7 @@ app.post('/api/schedule', async (req, res) => {
     }
 });
 
-// 5. Get Logs
+// 6. Get Logs for Frontend Dashboard
 app.get('/api/logs', async (req, res) => {
     try {
         const list = await logs.find({}).sort({ created_at: -1 }).limit(100).toArray();
@@ -109,9 +123,11 @@ app.get('/api/logs', async (req, res) => {
     }
 });
 
-// --- CORE SMS LOGIC (SMSGATE) ---
+
+// ==========================================
+// CORE SMS LOGIC (SMSGATE)
+// ==========================================
 async function processSMS(numbers, message, type) {
-    // Check if credentials exist
     if (!SMSGATE_USER || !SMSGATE_PASS) {
         console.error('❌ SMSGate credentials missing in Render!');
         return;
@@ -144,6 +160,7 @@ async function processSMS(numbers, message, type) {
                 console.error(`Failed to send to ${number}:`, errorMsg);
             }
 
+            // Save to database logs
             await logs.insertOne({ 
                 phone: number, 
                 message, 
@@ -165,32 +182,40 @@ async function processSMS(numbers, message, type) {
             });
         }
         
-        // Wait 3 seconds between messages to prevent carrier spam blocking
+        // 🛑 CRITICAL: Wait 3 seconds between messages to prevent carrier spam blocking
         await new Promise(r => setTimeout(r, 3000));
     }
 }
 
-// --- CRON JOB: Check for Scheduled Messages Every Minute ---
+
+// ==========================================
+// CRON JOB: Check for Scheduled Messages
+// ==========================================
+// This runs silently in the background every single minute
 cron.schedule('* * * * *', async () => {
     try {
         const now = new Date();
+        // Find schedules that are 'pending' and whose time has passed
         const pendingSchedules = await schedules.find({ status: 'pending', scheduleTime: { $lte: now } }).toArray();
 
         for (const schedule of pendingSchedules) {
-            // Mark as processing so it doesn't run twice
+            // Mark as processing so it doesn't accidentally run twice
             await schedules.updateOne({ _id: schedule._id }, { $set: { status: 'processing' } });
             
             console.log(`⏰ Running scheduled SMS to ${schedule.numbers.length} people...`);
             
+            // Send the messages
             await processSMS(schedule.numbers, schedule.message, 'Scheduled');
 
             // Mark as completed
             await schedules.updateOne({ _id: schedule._id }, { $set: { status: 'completed' } });
+            console.log(`✅ Finished scheduled batch.`);
         }
     } catch (e) {
         console.error('Cron job error:', e.message);
     }
 });
+
 
 // --- START SERVER ---
 const PORT = process.env.PORT || 4000;
