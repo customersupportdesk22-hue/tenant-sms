@@ -7,10 +7,9 @@ require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Increased limit in case you paste large contacts
+app.use(express.json({ limit: '10mb' })); // Increased limit to handle large contact lists
 
 // --- CONFIGURATION ---
-// SMSGate uses Basic Auth. Make sure these are set in Render Environment Variables
 const SMSGATE_USER = process.env.SMSGATE_USER;
 const SMSGATE_PASS = process.env.SMSGATE_PASS;
 const SMSGATE_URL = 'https://api.sms-gate.app/3rdparty/v1/messages';
@@ -27,7 +26,7 @@ async function connectDB() {
     try {
         const client = new MongoClient(MONGODB_URI);
         await client.connect();
-        db = client.db('sms-app'); // Creates/uses a dedicated database for this app
+        db = client.db('sms-app'); // Dedicated database for this project
         contacts = db.collection('contacts');
         schedules = db.collection('schedules');
         logs = db.collection('logs');
@@ -63,7 +62,6 @@ app.post('/api/contacts', async (req, res) => {
     if (!numbers || numbers.length === 0) return res.status(400).json({ error: 'No numbers provided' });
 
     try {
-        // Filter out duplicates based on phone number (optional but recommended)
         const docs = numbers.map(n => ({ phone: n, created_at: new Date() }));
         await contacts.insertMany(docs);
         res.json({ success: true, message: `${numbers.length} numbers saved!` });
@@ -72,7 +70,7 @@ app.post('/api/contacts', async (req, res) => {
     }
 });
 
-// 3. Delete ALL contacts (The new route you requested)
+// 3. Delete ALL contacts
 app.delete('/api/contacts/all', async (req, res) => {
     try {
         await contacts.deleteMany({}); 
@@ -87,7 +85,7 @@ app.post('/api/send-now', async (req, res) => {
     const { message, numbers } = req.body;
     if (!message || !numbers) return res.status(400).json({ error: 'Missing data' });
     
-    // Respond immediately so the UI doesn't freeze (sending happens in background)
+    // Respond immediately so the UI doesn't freeze
     res.json({ success: true, message: 'Sending started in background' });
     
     // Process in background
@@ -120,6 +118,16 @@ app.get('/api/logs', async (req, res) => {
         res.json({ logs: list });
     } catch (e) {
         res.status(500).json({ error: 'Failed to fetch logs' });
+    }
+});
+
+// 7. Delete ALL Logs (New Route)
+app.delete('/api/logs/all', async (req, res) => {
+    try {
+        await logs.deleteMany({}); 
+        res.json({ success: true, message: 'All logs deleted successfully!' });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to delete logs' });
     }
 });
 
