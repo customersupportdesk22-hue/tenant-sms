@@ -5,25 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pro SMS Manager</title>
     <style>
-        body { font-family: sans-serif; background: #F0F2F5; padding: 20px; color: #333; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #F0F2F5; padding: 20px; color: #333; }
         .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         .tabs { display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; }
-        .tab { flex: 1; text-align: center; padding: 10px; cursor: pointer; font-weight: bold; color: #888; }
+        .tab { flex: 1; text-align: center; padding: 10px; cursor: pointer; font-weight: bold; color: #888; transition: 0.2s; }
         .tab.active { color: #003B5C; border-bottom: 2px solid #003B5C; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         label { font-weight: bold; font-size: 14px; display: block; margin-top: 15px; margin-bottom: 5px; }
-        textarea, input, select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-family: inherit; }
-        button { width: 100%; padding: 14px; background: #003B5C; color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; margin-top: 15px; cursor: pointer; }
-        button:disabled { background: #999; }
-        .log-item { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; font-size: 13px; }
+        textarea, input, select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-family: inherit; font-size: 14px; }
+        textarea { resize: vertical; }
+        button { width: 100%; padding: 14px; background: #003B5C; color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; margin-top: 15px; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #0A537D; }
+        button:disabled { background: #999; cursor: not-allowed; }
+        .btn-danger { background: #dc3545; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-success { background: #28a745; }
+        .btn-success:hover { background: #218838; }
+        .log-item { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; font-size: 13px; align-items: center; }
         .success { color: green; font-weight: bold; }
         .failed { color: red; font-weight: bold; }
+        .note { font-size: 12px; color: #666; margin-top: 5px; }
+        .gen-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; }
+        .flex-row { display: flex; gap: 10px; margin-bottom: 10px; }
     </style>
 </head>
 <body>
+
 <div class="container">
-    <h2>📱 Pro SMS Manager</h2>
+    <h2 style="margin-top:0; color:#003B5C;">📱 Pro SMS Manager</h2>
     
     <div class="tabs">
         <div class="tab active" onclick="switchTab('compose')">Send</div>
@@ -31,9 +41,9 @@
         <div class="tab" onclick="switchTab('logs')">Logs</div>
     </div>
 
-    <!-- COMPOSE TAB -->
+    <!-- ================= COMPOSE TAB ================= -->
     <div id="compose" class="tab-content active">
-        <label>Message</label>
+        <label>Message Content</label>
         <textarea id="message" rows="4" placeholder="Type your message here..."></textarea>
 
         <label>Select Recipients</label>
@@ -53,17 +63,32 @@
         <button id="sendBtn" onclick="handleSend()">Send SMS</button>
     </div>
 
-    <!-- CONTACTS TAB -->
+    <!-- ================= CONTACTS TAB ================= -->
     <div id="contacts" class="tab-content">
+        
+        <!-- Number Generator -->
+        <div class="gen-box">
+            <label style="margin-top:0;">Auto-Generate Numbers</label>
+            <div class="flex-row">
+                <input type="text" id="baseNumber" placeholder="Base (e.g., 254738264143)" style="flex: 2;">
+                <input type="number" id="generateCount" placeholder="Count (e.g., 100)" style="flex: 1;">
+            </div>
+            <button onclick="generateNumbers()" class="btn-success" style="margin-top: 0; padding: 10px; font-size: 14px;">⚡ Generate Numbers</button>
+            <div class="note">Generates sequential numbers starting from your base.</div>
+        </div>
+
         <label>Paste Numbers (One per line)</label>
         <textarea id="newContacts" rows="6" placeholder="0712345678&#10;0798765432"></textarea>
-        <button onclick="saveContacts()">Save to Database</button>
-        <p id="contactCount" style="margin-top:15px; font-weight:bold;"></p>
+        
+        <button onclick="saveContacts()">💾 Save to Database</button>
+        <button onclick="clearAllContacts()" class="btn-danger">🗑️ Delete All Contacts</button>
+        
+        <p id="contactCount" style="margin-top:15px; font-weight:bold; text-align:center;"></p>
     </div>
 
-    <!-- LOGS TAB -->
+    <!-- ================= LOGS TAB ================= -->
     <div id="logs" class="tab-content">
-        <h3>Recent Activity</h3>
+        <h3 style="margin-top:0;">Recent Activity</h3>
         <div id="logList">Loading...</div>
     </div>
 </div>
@@ -71,6 +96,7 @@
 <script>
     let allContacts = [];
 
+    // --- UI LOGIC ---
     function switchTab(tabId) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -100,9 +126,36 @@
         return n;
     }
 
+    // --- CONTACTS LOGIC ---
+    function generateNumbers() {
+        const baseStr = document.getElementById('baseNumber').value.trim();
+        const count = parseInt(document.getElementById('generateCount').value);
+
+        if (!baseStr || isNaN(count) || count <= 0) {
+            return alert("Please enter a valid base number and count.");
+        }
+        if (count > 10000) {
+            return alert("Maximum generation limit is 10,000 at a time to prevent browser freezing.");
+        }
+
+        const baseNum = parseInt(baseStr);
+        if (isNaN(baseNum)) {
+            return alert("Base number must contain only digits (e.g., 254738264143).");
+        }
+
+        let generatedNumbers = [];
+        for (let i = 0; i < count; i++) {
+            generatedNumbers.push(baseNum + i);
+        }
+
+        document.getElementById('newContacts').value = generatedNumbers.join('\n');
+        alert(`Generated ${count} numbers. Review them and click "Save to Database".`);
+    }
+
     async function saveContacts() {
         const raw = document.getElementById('newContacts').value;
         const numbers = raw.split('\n').map(n => formatNumber(n)).filter(n => n.length > 8);
+        
         if (!numbers.length) return alert('No valid numbers found.');
 
         const res = await fetch('/api/contacts', {
@@ -110,18 +163,36 @@
             body: JSON.stringify({ numbers })
         });
         const data = await res.json();
-        alert(data.message);
+        alert(data.message || data.error);
         document.getElementById('newContacts').value = '';
         loadContacts();
     }
 
-    async function loadContacts() {
-        const res = await fetch('/api/contacts');
-        const data = await res.json();
-        allContacts = data.contacts.map(c => c.phone);
-        document.getElementById('contactCount').innerText = `You have ${allContacts.length} saved contacts.`;
+    async function clearAllContacts() {
+        if (!confirm('Are you sure you want to delete ALL saved contacts? This cannot be undone.')) return;
+        
+        try {
+            const res = await fetch('/api/contacts/all', { method: 'DELETE' });
+            const data = await res.json();
+            alert(data.message || 'Contacts cleared.');
+            loadContacts();
+        } catch (err) {
+            alert('Failed to delete contacts.');
+        }
     }
 
+    async function loadContacts() {
+        try {
+            const res = await fetch('/api/contacts');
+            const data = await res.json();
+            allContacts = data.contacts.map(c => c.phone);
+            document.getElementById('contactCount').innerText = `You have ${allContacts.length} saved contacts.`;
+        } catch(e) {
+            console.error("Failed to load contacts");
+        }
+    }
+
+    // --- SEND LOGIC ---
     async function handleSend() {
         const msg = document.getElementById('message').value;
         const type = document.getElementById('recipientType').value;
@@ -166,22 +237,27 @@
         btn.disabled = false; btn.innerText = 'Send SMS';
     }
 
+    // --- LOGS LOGIC ---
     async function loadLogs() {
-        const res = await fetch('/api/logs');
-        const data = await res.json();
-        const list = document.getElementById('logList');
-        
-        if (data.logs.length === 0) return list.innerHTML = '<p>No logs yet.</p>';
-        
-        list.innerHTML = data.logs.map(log => `
-            <div class="log-item">
-                <div>
-                    <b>${log.phone}</b><br>
-                    <span style="font-size:11px; color:#888;">${new Date(log.created_at).toLocaleString()} (${log.type})</span>
+        try {
+            const res = await fetch('/api/logs');
+            const data = await res.json();
+            const list = document.getElementById('logList');
+            
+            if (data.logs.length === 0) return list.innerHTML = '<p>No logs yet.</p>';
+            
+            list.innerHTML = data.logs.map(log => `
+                <div class="log-item">
+                    <div>
+                        <b>${log.phone}</b><br>
+                        <span style="font-size:11px; color:#888;">${new Date(log.created_at).toLocaleString()} (${log.type})</span>
+                    </div>
+                    <div class="${log.status}">${log.status.toUpperCase()}</div>
                 </div>
-                <div class="${log.status}">${log.status.toUpperCase()}</div>
-            </div>
-        `).join('');
+            `).join('');
+        } catch(e) {
+            document.getElementById('logList').innerHTML = '<p>Error loading logs.</p>';
+        }
     }
 
     // Load contacts on startup
