@@ -6,7 +6,7 @@ const cron = require('node-cron');
 require('dotenv').config();
 
 // ✅ IMPORT THE FREE NUMBER CHECKER
-const { isValidKePhone } = require('kenya-utils/phone');
+const { isValidKePhone } = require('kenya-utils');
 
 const app = express();
 app.use(cors());
