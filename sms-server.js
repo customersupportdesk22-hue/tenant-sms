@@ -5,8 +5,16 @@ const { MongoClient } = require('mongodb');
 const cron = require('node-cron');
 require('dotenv').config();
 
-// ✅ IMPORT THE FREE NUMBER CHECKER
-const { isValidKePhone } = require('kenya-utils');
+// 🛡️ SAFE REQUIRE FOR KENYA-UTILS (Prevents MODULE_NOT_FOUND crash)
+let isValidKePhone;
+try {
+    const kenyaUtils = require('kenya-utils');
+    isValidKePhone = kenyaUtils.isValidKePhone;
+} catch (error) {
+    console.log('⚠️ kenya-utils package not found. Using built-in fallback checker.');
+    // Fallback: Validates 07... and 01... formats
+    isValidKePhone = (phone) => /^(?:\+254|0)(?:7|1)\d{8}$/.test(phone);
+}
 
 const app = express();
 app.use(cors());
@@ -69,16 +77,6 @@ function randomKenyanNumber(network = 'both') {
     return prefix + suffix;
 }
 
-function generateUniqueBatch(count, network = 'both') {
-    const set = new Set();
-    let safety = 0;
-    while (set.size < count && safety < count * 50) {
-        set.add(randomKenyanNumber(network));
-        safety++;
-    }
-    return [...set];
-}
-
 // --- SERVE FRONTEND ---
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -88,7 +86,6 @@ app.get('/', (req, res) => {
 // API ROUTES
 // ==========================================
 
-// 1. Get all contacts
 app.get('/api/contacts', async (req, res) => {
     try {
         const list = await contacts.find({}).toArray();
@@ -98,7 +95,6 @@ app.get('/api/contacts', async (req, res) => {
     }
 });
 
-// 2. Add bulk contacts
 app.post('/api/contacts', async (req, res) => {
     const { numbers } = req.body;
     if (!numbers || numbers.length === 0) return res.status(400).json({ error: 'No numbers provided' });
@@ -112,7 +108,6 @@ app.post('/api/contacts', async (req, res) => {
     }
 });
 
-// 3. Delete ALL contacts
 app.delete('/api/contacts/all', async (req, res) => {
     try {
         await contacts.deleteMany({}); 
@@ -122,7 +117,6 @@ app.delete('/api/contacts/all', async (req, res) => {
     }
 });
 
-// 4. Send SMS Now (Manual)
 app.post('/api/send-now', async (req, res) => {
     const { message, numbers } = req.body;
     if (!message || !numbers) return res.status(400).json({ error: 'Missing data' });
@@ -132,7 +126,6 @@ app.post('/api/send-now', async (req, res) => {
     processSMS(numbers, message, 'Manual');
 });
 
-// 5. Schedule SMS for Later
 app.post('/api/schedule', async (req, res) => {
     const { message, numbers, scheduleTime } = req.body;
     if (!message || !numbers || !scheduleTime) return res.status(400).json({ error: 'Missing data' });
@@ -151,7 +144,6 @@ app.post('/api/schedule', async (req, res) => {
     }
 });
 
-// 6. Get Logs
 app.get('/api/logs', async (req, res) => {
     try {
         const list = await logs.find({}).sort({ created_at: -1 }).limit(100).toArray();
@@ -161,7 +153,6 @@ app.get('/api/logs', async (req, res) => {
     }
 });
 
-// 7. Delete ALL Logs
 app.delete('/api/logs/all', async (req, res) => {
     try {
         await logs.deleteMany({}); 
@@ -171,14 +162,26 @@ app.delete('/api/logs/all', async (req, res) => {
     }
 });
 
-// 8. Generate random Kenyan numbers (Safaricom + Airtel, 07 + 01)
+// 8. Generate random Kenyan numbers
 app.post('/api/generate-numbers', (req, res) => {
-    const { count = 10, network = 'both' } = req.body;
-    const amount = Math.min(Math.max(parseInt(count) || 10, 1), 1000); // clamp 1–1000
-    const numbers = generateUniqueBatch(amount, network);
-    res.json({ numbers, count: numbers.length });
-});
+    const { count = 10, network = 'both', exclude = [] } = req.body;
+    const amount = Math.min(Math.max(parseInt(count) || 10, 1), 1000);
 
+    const excludeSet = new Set(exclude.map(n => String(n).trim()).filter(Boolean));
+    const result = new Set();
+    let safety = 0;
+    const maxAttempts = Math.max(amount * 100, 5000);
+    
+    while (result.size < amount && safety < maxAttempts) {
+        const num = randomKenyanNumber(network);
+        if (!excludeSet.has(num) && !result.has(num)) {
+            result.add(num);
+        }
+        safety++;
+    }
+
+    res.json({ numbers: [...result], count: result.size });
+});
 
 // ==========================================
 // CORE SMS LOGIC (SMSGATE)
@@ -190,25 +193,15 @@ async function processSMS(numbers, message, type) {
     }
 
     for (const number of numbers) {
-        
-        // 🛑 1. FREE FORMAT CHECKER 🛑
-        // This stops fake numbers (e.g. 12345) or wrong formats instantly
-        if (!isValidKePhone(number)) {
+        if (typeof isValidKePhone === 'function' && !isValidKePhone(number)) {
             console.log(`⏭️ Skipping invalid format: ${number}`);
-            
             await logs.insertOne({ 
-                phone: number, 
-                message: message,
-                status: 'skipped_invalid', // This will show up in your Logs tab
-                type, 
-                created_at: new Date(), 
+                phone: number, message, status: 'skipped_invalid', type, created_at: new Date(), 
                 error: 'Invalid Kenyan mobile number format' 
             });
-            
-            continue; // Skip to the next number immediately
+            continue;
         }
 
-        // 2. SEND THE SMS (If valid format)
         try {
             const auth = Buffer.from(`${SMSGATE_USER}:${SMSGATE_PASS}`).toString('base64');
 
@@ -231,37 +224,24 @@ async function processSMS(numbers, message, type) {
             if (!isSuccess) {
                 const data = await response.json().catch(() => ({}));
                 errorMsg = JSON.stringify(data) || `HTTP ${response.status}`;
-                console.error(`Failed to send to ${number}:`, errorMsg);
             }
 
             await logs.insertOne({ 
-                phone: number, 
-                message, 
-                status: isSuccess ? 'success' : 'failed', 
-                type, 
-                created_at: new Date(), 
-                error: errorMsg
+                phone: number, message, status: isSuccess ? 'success' : 'failed', type, created_at: new Date(), error: errorMsg
             });
 
         } catch (error) {
-            console.error(`Network error sending to ${number}:`, error.message);
             await logs.insertOne({ 
-                phone: number, 
-                message, 
-                status: 'failed', 
-                type, 
-                created_at: new Date(), 
-                error: 'Network error: ' + error.message 
+                phone: number, message, status: 'failed', type, created_at: new Date(), error: 'Network error: ' + error.message 
             });
         }
         
-        // Wait 3 seconds before sending the next message
         await new Promise(r => setTimeout(r, 3000));
     }
 }
 
 // ==========================================
-// CRON JOB: Check for Scheduled Messages
+// CRON JOB
 // ==========================================
 cron.schedule('* * * * *', async () => {
     try {
@@ -270,12 +250,8 @@ cron.schedule('* * * * *', async () => {
 
         for (const schedule of pendingSchedules) {
             await schedules.updateOne({ _id: schedule._id }, { $set: { status: 'processing' } });
-            
-            console.log(`⏰ Running scheduled SMS to ${schedule.numbers.length} people...`);
             await processSMS(schedule.numbers, schedule.message, 'Scheduled');
-
             await schedules.updateOne({ _id: schedule._id }, { $set: { status: 'completed' } });
-            console.log(`✅ Finished scheduled batch.`);
         }
     } catch (e) {
         console.error('Cron job error:', e.message);
