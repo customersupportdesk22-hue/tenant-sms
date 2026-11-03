@@ -40,6 +40,45 @@ async function connectDB() {
 }
 connectDB();
 
+// ==========================================
+// RANDOM NUMBER GENERATOR (Safaricom + Airtel, 07 + 01)
+// ==========================================
+const SAFARICOM_PREFIXES = [
+    '070','071','072','074','0757','0758','0759','0768','0769','079',       // 07 range
+    '0110','0111','0112','0113','0114','0115','0116','0117','0118','0119'   // 01 range
+];
+
+const AIRTEL_PREFIXES = [
+    '073','0750','0751','0752','0753','0754','0755','0756','078',           // 07 range
+    '0100','0101','0102','0103','0104','0105','0106','0107','0108','0109'   // 01 range
+];
+
+function randomKenyanNumber(network = 'both') {
+    let pool;
+    if (network === 'safaricom')   pool = SAFARICOM_PREFIXES;
+    else if (network === 'airtel') pool = AIRTEL_PREFIXES;
+    else                           pool = [...SAFARICOM_PREFIXES, ...AIRTEL_PREFIXES];
+
+    const prefix = pool[Math.floor(Math.random() * pool.length)];
+    const digitsLeft = 10 - prefix.length;
+
+    let suffix = '';
+    for (let i = 0; i < digitsLeft; i++) {
+        suffix += Math.floor(Math.random() * 10);
+    }
+    return prefix + suffix;
+}
+
+function generateUniqueBatch(count, network = 'both') {
+    const set = new Set();
+    let safety = 0;
+    while (set.size < count && safety < count * 50) {
+        set.add(randomKenyanNumber(network));
+        safety++;
+    }
+    return [...set];
+}
+
 // --- SERVE FRONTEND ---
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -130,6 +169,14 @@ app.delete('/api/logs/all', async (req, res) => {
     } catch (e) {
         res.status(500).json({ error: 'Failed to delete logs' });
     }
+});
+
+// 8. Generate random Kenyan numbers (Safaricom + Airtel, 07 + 01)
+app.post('/api/generate-numbers', (req, res) => {
+    const { count = 10, network = 'both' } = req.body;
+    const amount = Math.min(Math.max(parseInt(count) || 10, 1), 1000); // clamp 1–1000
+    const numbers = generateUniqueBatch(amount, network);
+    res.json({ numbers, count: numbers.length });
 });
 
 
