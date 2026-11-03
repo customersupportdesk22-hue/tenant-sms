@@ -69,7 +69,6 @@ function randomKenyanNumber(network = 'both') {
     return prefix + suffix;
 }
 
-// Guarantees ZERO duplicates inside a single batch (Set-based)
 function generateUniqueBatch(count, network = 'both') {
     const set = new Set();
     let safety = 0;
@@ -173,28 +172,10 @@ app.delete('/api/logs/all', async (req, res) => {
 });
 
 // 8. Generate random Kenyan numbers (Safaricom + Airtel, 07 + 01)
-//    - No duplicates inside a single batch (Set-based)
-//    - Optionally exclude numbers you pass via `exclude` (to avoid overlapping with existing list)
 app.post('/api/generate-numbers', (req, res) => {
-    const { count = 10, network = 'both', exclude = [] } = req.body;
+    const { count = 10, network = 'both' } = req.body;
     const amount = Math.min(Math.max(parseInt(count) || 10, 1), 1000); // clamp 1–1000
-
-    // Normalize the exclusion list for fast lookup
-    const excludeSet = new Set(exclude.map(n => String(n).trim()).filter(Boolean));
-
-    // Keep generating until we have `amount` unique numbers that are NOT in the exclude list
-    const result = new Set();
-    let safety = 0;
-    const maxAttempts = Math.max(amount * 100, 5000);
-    while (result.size < amount && safety < maxAttempts) {
-        const num = randomKenyanNumber(network);
-        if (!excludeSet.has(num) && !result.has(num)) {
-            result.add(num);
-        }
-        safety++;
-    }
-
-    const numbers = [...result];
+    const numbers = generateUniqueBatch(amount, network);
     res.json({ numbers, count: numbers.length });
 });
 
