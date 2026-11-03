@@ -95,15 +95,36 @@ app.get('/api/contacts', async (req, res) => {
     }
 });
 
+// ✅ UPDATED: Fast & Duplicate Protected (Allows 3000+ instantly)
 app.post('/api/contacts', async (req, res) => {
     const { numbers } = req.body;
     if (!numbers || numbers.length === 0) return res.status(400).json({ error: 'No numbers provided' });
 
     try {
-        const docs = numbers.map(n => ({ phone: n, created_at: new Date() }));
+        // 1. Remove duplicates from the numbers you just pasted
+        const uniqueNumbers = [...new Set(numbers)];
+        
+        // 2. Find which of these numbers ALREADY exist in the database
+        const existingDocs = await contacts.find({ phone: { $in: uniqueNumbers } }).toArray();
+        const existingSet = new Set(existingDocs.map(d => d.phone));
+        
+        // 3. Keep ONLY the numbers that are NOT in the database
+        const newNumbers = uniqueNumbers.filter(n => !existingSet.has(n));
+        
+        if (newNumbers.length === 0) {
+             return res.json({ success: true, message: `Saved 0 new numbers. (All ${numbers.length} were already in the database).` });
+        }
+        
+        // 4. Save the new numbers all at once
+        const docs = newNumbers.map(n => ({ phone: n, created_at: new Date() }));
         await contacts.insertMany(docs);
-        res.json({ success: true, message: `${numbers.length} numbers saved!` });
+        
+        res.json({ 
+            success: true, 
+            message: `Successfully saved ${newNumbers.length} numbers! (Skipped ${numbers.length - newNumbers.length} duplicates).` 
+        });
     } catch (e) {
+        console.error(e);
         res.status(500).json({ error: 'Failed to save contacts' });
     }
 });
@@ -162,10 +183,10 @@ app.delete('/api/logs/all', async (req, res) => {
     }
 });
 
-// 8. Generate random Kenyan numbers
+// ✅ UPDATED: Generate random Kenyan numbers (Allows up to 5000)
 app.post('/api/generate-numbers', (req, res) => {
     const { count = 10, network = 'both', exclude = [] } = req.body;
-    const amount = Math.min(Math.max(parseInt(count) || 10, 1), 1000);
+    const amount = Math.min(Math.max(parseInt(count) || 10, 1), 5000); // Changed to 5000
 
     const excludeSet = new Set(exclude.map(n => String(n).trim()).filter(Boolean));
     const result = new Set();
