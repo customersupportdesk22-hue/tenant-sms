@@ -33,11 +33,11 @@ const db = createClient({
 // --- CREATE TABLES ON STARTUP ---
 async function initDB() {
     try {
-        await db.batch([
-            "CREATE TABLE IF NOT EXISTS contacts (id INTEGER PRIMARY KEY AUTOINCREMENT, phone TEXT UNIQUE, created_at TEXT)",
-            "CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, numbers TEXT, schedule_time TEXT, status TEXT, created_at TEXT)",
-            "CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, phone TEXT, message TEXT, status TEXT, type TEXT, created_at TEXT, error TEXT)"
-        ], "write");
+        // Run sequentially to prevent the Turso 400 Migration Error
+        await db.execute("CREATE TABLE IF NOT EXISTS contacts (id INTEGER PRIMARY KEY AUTOINCREMENT, phone TEXT UNIQUE, created_at TEXT)");
+        await db.execute("CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, numbers TEXT, schedule_time TEXT, status TEXT, created_at TEXT)");
+        await db.execute("CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, phone TEXT, message TEXT, status TEXT, type TEXT, created_at TEXT, error TEXT)");
+        
         console.log('✅ Turso Database Connected & Tables Ready');
     } catch (err) {
         console.error('❌ Turso Connection Failed:', err.message);
@@ -79,6 +79,8 @@ app.post('/api/contacts', async (req, res) => {
 
     try {
         const now = new Date().toISOString();
+        
+        // INSERT OR IGNORE handles duplicate protection instantly in SQLite
         const statements = numbers.map(num => ({
             sql: 'INSERT OR IGNORE INTO contacts (phone, created_at) VALUES (?, ?)',
             args: [num, now]
